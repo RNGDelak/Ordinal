@@ -174,11 +174,26 @@ function renderPreview(){
     }
 }
 
+    function autoPrecision() {
+        if (zoom.lte(0)) return;
+
+        // floor(log10(zoom))
+        const magnitude = zoom.log(10).floor();
+
+        // add safety margin (7 like you requested)
+        const newPrecision = magnitude.plus(7).toNumber();
+
+        // prevent precision from going insane
+        const clamped = Math.max(20, Math.min(newPrecision, 1000));
+
+        Decimal.set({ precision: clamped });
+    }
+
+    
 // =====================
 // FULL RENDER
 // =====================
 function startRender(){
-
     renderVersion++;
     const currentVersion = renderVersion;
 
@@ -396,7 +411,7 @@ function drawOrdinalTick(ord, sx,zoom){
 let fps=0,lastTime=performance.now(),frames=0;
 
 function loop(){
-
+    autoPrecision();
     frames++;
     const now=performance.now();
     if(now-lastTime>=1000){
