@@ -199,6 +199,89 @@ window.addEventListener("mousemove", e => {
         endInteraction();
     });
 
+    // =====================
+    // KEYBOARD SUPPORT
+    // =====================
+
+    let keys = {
+        ArrowUp: false,
+        ArrowDown: false,
+        ArrowLeft: false,
+        ArrowRight: false
+    };
+
+    let keyboardAnimating = false;
+
+    function startKeyboardLoop(){
+        if (keyboardAnimating) return;
+        keyboardAnimating = true;
+        startInteraction();
+        requestAnimationFrame(keyboardStep);
+    }
+
+    function stopKeyboardLoop(){
+        keyboardAnimating = false;
+        endInteraction();
+    }
+
+    function keyboardStep(){
+        if (!keyboardAnimating) return;
+
+        const panSpeed = new Decimal(20).div(zoom); // pan speed scales with zoom
+        const zoomSpeed = new Decimal(0.02);        // smooth zoom rate
+
+        // PAN
+        if (keys.ArrowLeft) {
+            offsetX = offsetX.plus(panSpeed);
+        }
+        if (keys.ArrowRight) {
+            offsetX = offsetX.minus(panSpeed);
+        }
+
+        // ZOOM
+        if (keys.ArrowUp || keys.ArrowDown) {
+
+            const direction = keys.ArrowUp ? 1 : -1;
+            const zoomFactor = new Decimal(1).plus(zoomSpeed.times(direction));
+
+            const centerScreen = new Decimal(canvas.width / 2);
+            const centerWorld = screenToWorld(centerScreen);
+
+            zoom = zoom.times(zoomFactor);
+            if (zoom.lte(0)) zoom = new Decimal(1);
+
+            offsetX = offsetX.plus(
+                centerWorld.minus(screenToWorld(centerScreen))
+            );
+        }
+
+        requestAnimationFrame(keyboardStep);
+    }
+
+    window.addEventListener("keydown", e => {
+        if (keys.hasOwnProperty(e.key)) {
+            if (!keys[e.key]) {
+                keys[e.key] = true;
+                startKeyboardLoop();
+            }
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener("keyup", e => {
+        if (keys.hasOwnProperty(e.key)) {
+            keys[e.key] = false;
+
+            // stop only if all released
+            if (!keys.ArrowUp && !keys.ArrowDown &&
+                !keys.ArrowLeft && !keys.ArrowRight) {
+                stopKeyboardLoop();
+            }
+
+            e.preventDefault();
+        }
+    });
+
 // =====================
 // PREVIEW RENDER (50 STEPS)
 // =====================
@@ -489,7 +572,10 @@ function loop(){
     let centerWorld = screenToWorld(canvas.width/2);
     document.getElementById("worldDisplay").textContent =
         centerWorld.toPrecision(3)
-    document.getElementById("ord").innerHTML  = toOrdinalfine(getordinal(Math.max(1,centerWorld)))
+    const safeCenter = Decimal.max(new Decimal(1), centerWorld);
+
+    document.getElementById("ord").innerHTML =
+        toOrdinalfine(getordinal(safeCenter));
 
 
     if(isInteracting){
