@@ -12,14 +12,33 @@ html, body {
     font-family: monospace;
     touch-action: none;
 }
+
 canvas { display: block; }
+
+#ui {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.6);
+    padding: 10px 14px;
+    border-radius: 8px;
+    z-index: 10;
+}
 </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/decimal.js/10.4.3/decimal.min.js"></script>
 
+<div id="ui">
+  <div>Zoom: <span id="zoomDisplay"></span></div>
+  <div>FPS: <span id="fpsDisplay"></span></div>
+  <div>World Position: <span id="worldDisplay"></span></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/decimal.js/10.4.3/decimal.min.js"></script>
 <script>
+
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -35,6 +54,10 @@ resize();
 // =====================
 let zoom = new Decimal(1000);
 let offsetX = new Decimal(0);
+
+let isInteracting = false;
+let renderVersion = 0;
+let idleTimeout = null;
 
 // =====================
 // COORDINATES
@@ -54,7 +77,24 @@ function screenToWorld(x) {
 }
 
 // =====================
-// MOUSE CONTROLS
+// INTERACTION CONTROL
+// =====================
+function startInteraction() {
+    isInteracting = true;
+    renderVersion++;
+    if (idleTimeout) clearTimeout(idleTimeout);
+}
+
+function endInteraction() {
+    isInteracting = false;
+
+    idleTimeout = setTimeout(() => {
+        startRender();
+    }, 120);
+}
+
+// =====================
+// MOUSE
 // =====================
 let mouseDown = false;
 let lastX = 0;
@@ -64,9 +104,15 @@ canvas.addEventListener("mousedown", e => {
     mouseDown = true;
     lastX = e.clientX;
     lastY = e.clientY;
+    startInteraction();
 });
 
-window.addEventListener("mouseup", () => mouseDown = false);
+window.addEventListener("mouseup", () => {
+    if(mouseDown){
+        mouseDown = false;
+        endInteraction();
+    }
+});
 
 window.addEventListener("mousemove", e => {
     if (!mouseDown) return;
@@ -77,12 +123,9 @@ window.addEventListener("mousemove", e => {
     lastX = e.clientX;
     lastY = e.clientY;
 
-    // PAN
     offsetX = offsetX.plus(dx.div(zoom));
 
-    // ZOOM (vertical drag)
     const zoomFactor = new Decimal(1).plus(dy.neg().times(0.005));
-
     const centerScreen = new Decimal(canvas.width / 2);
     const centerWorld = screenToWorld(centerScreen);
 
@@ -93,65 +136,103 @@ window.addEventListener("mousemove", e => {
 });
 
 // =====================
-// TOUCH CONTROLS
+// PREVIEW RENDER (50 STEPS)
 // =====================
-let touchMode = null;
-let lastTouchX = null;
-let lastDist = null;
+function renderPreview(){
 
-canvas.addEventListener("touchstart", e => {
-    e.preventDefault();
-    if (e.touches.length === 1) {
-        touchMode = "pan";
-        lastTouchX = e.touches[0].clientX;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawAxis();
+
+    const worldLeft = screenToWorld(0);
+    const worldRight = screenToWorld(canvas.width);
+
+    const start = Decimal.max(new Decimal(1), worldLeft);
+    const end = worldRight;
+
+    if (end.lte(start)) return;
+
+    const steps = 50;
+    let lastOrdinal = null;
+
+    for (let step = 0; step <= steps; step++) {
+
+        const ratio = new Decimal(step).div(steps);
+        const x = start.plus(end.minus(start).mul(ratio));
+        const ordinal = getordinal(x);
+
+        if (!arraysEqual(lastOrdinal, ordinal)) {
+
+            const pos = getpoint(ordinal);
+            const sx = worldToScreen(pos);
+
+            if (sx > -50 && sx < canvas.width + 50) {
+                drawOrdinalTick(ordinal, sx);
+            }
+
+            lastOrdinal = ordinal;
+        }
     }
-    if (e.touches.length === 2) {
-        touchMode = "zoom";
-        lastDist = getDist(e.touches);
-    }
-}, { passive:false });
-
-canvas.addEventListener("touchmove", e => {
-    e.preventDefault();
-
-    if (touchMode === "pan" && e.touches.length === 1) {
-        const dx = new Decimal(e.touches[0].clientX - lastTouchX);
-        lastTouchX = e.touches[0].clientX;
-        offsetX = offsetX.plus(dx.div(zoom));
-    }
-
-    if (touchMode === "zoom" && e.touches.length === 2) {
-        const newDist = getDist(e.touches);
-        const factor = new Decimal(newDist).div(lastDist);
-
-        const centerScreen = new Decimal(
-            (e.touches[0].clientX + e.touches[1].clientX)/2
-        );
-
-        const centerWorld = screenToWorld(centerScreen);
-
-        zoom = zoom.times(factor);
-        if (zoom.lte(0)) zoom = new Decimal(1);
-
-        offsetX = offsetX.plus(centerWorld.minus(screenToWorld(centerScreen)));
-
-        lastDist = newDist;
-    }
-}, { passive:false });
-
-canvas.addEventListener("touchend", () => {
-    touchMode = null;
-    lastDist = null;
-});
-
-function getDist(t) {
-    const dx = t[0].clientX - t[1].clientX;
-    const dy = t[0].clientY - t[1].clientY;
-    return Math.sqrt(dx*dx + dy*dy);
 }
 
 // =====================
-// ORDINAL ENGINE (UNCHANGED)
+// FULL RENDER
+// =====================
+function startRender(){
+
+    renderVersion++;
+    const currentVersion = renderVersion;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawAxis();
+
+    const worldLeft = screenToWorld(0);
+    const worldRight = screenToWorld(canvas.width);
+
+    const start = Decimal.max(new Decimal(1), worldLeft);
+    const end = worldRight;
+
+    if (end.lte(start)) return;
+
+    const totalSteps = Math.floor(canvas.width);
+    let step = 0;
+    let lastOrdinal = null;
+
+    function processChunk(){
+
+        if (currentVersion !== renderVersion) return;
+        if (isInteracting) return;
+
+        const chunkSize = Math.floor(totalSteps/25);
+
+        for (let i = 0; i < chunkSize && step <= totalSteps; i++, step++) {
+
+            const ratio = new Decimal(step).div(totalSteps);
+            const x = start.plus(end.minus(start).mul(ratio));
+            const ordinal = getordinal(x);
+
+            if (!arraysEqual(lastOrdinal, ordinal)) {
+
+                const pos = getpoint(ordinal);
+                const sx = worldToScreen(pos);
+
+                if (sx > -50 && sx < canvas.width + 50) {
+                    drawOrdinalTick(ordinal, sx);
+                }
+
+                lastOrdinal = ordinal;
+            }
+        }
+
+        if (step <= totalSteps) {
+            requestAnimationFrame(processChunk);
+        }
+    }
+
+    processChunk();
+}
+
+// =====================
+// ORDINAL ENGINE
 // =====================
 function getEpsilon() {
   return Decimal.pow(10, -Decimal.precision + 4);
@@ -218,28 +299,6 @@ function arraysEqual(a,b){
   return true;
 }
 
-function getdrawing(startInput,endInput,steps){
-  const start=new Decimal(startInput);
-  const end=new Decimal(endInput);
-  const stepsDec=new Decimal(steps);
-
-  let result=[];
-  let lastOrdinal=null;
-
-  for(let s=0;s<=steps;s++){
-    const ratio=new Decimal(s).div(stepsDec);
-    const x=start.plus(end.minus(start).mul(ratio));
-    const ordinal=getordinal(x);
-
-    if(!arraysEqual(lastOrdinal,ordinal)){
-      const pos=getpoint(ordinal);
-      result.push([ordinal,pos]);
-      lastOrdinal=ordinal;
-    }
-  }
-  return result;
-}
-
 function toOrdinal(coeff){
   let parts=[];
   for(let i=coeff.length-1;i>=0;i--){
@@ -253,19 +312,47 @@ function toOrdinal(coeff){
   return parts.length?parts.join(" + "):"0";
 }
 
-// =====================
-// FPS COUNTER
-// =====================
-let fps=0,lastTime=performance.now(),frames=0;
+function classifyOrdinal(coeff){
+    let nonZeroCount = 0;
+    let nonZeroIndex = -1;
 
-// =====================
-// DRAW
-// =====================
-  let iterations = 2;
-function draw(){
+    for(let i=0;i<coeff.length;i++){
+        if(!coeff[i].eq(0)){
+            nonZeroCount++;
+            nonZeroIndex = i;
+        }
+    }
 
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    const midY=canvas.height/2;
+    if(nonZeroCount === 0) return "zero";
+    if(nonZeroCount === 1 && nonZeroIndex !== 0) return "omegaPower";
+    if(!coeff[0].eq(0)) return "successor";
+    return "limit";
+}
+
+function drawOrdinalTick(ord, sx){
+
+    const type = classifyOrdinal(ord);
+
+    let color = "white";
+    if(type === "zero") color = "#00ffff";
+    if(type === "limit") color = "orange";
+    if(type === "omegaPower") color = "yellow";
+
+    const midY = canvas.height / 2;
+
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+
+    ctx.beginPath();
+    ctx.moveTo(sx, midY - 10);
+    ctx.lineTo(sx, midY + 10);
+    ctx.stroke();
+
+    ctx.fillText(toOrdinal(ord), sx, midY + 18);
+}
+
+function drawAxis(){
+    const midY = canvas.height/2;
 
     ctx.strokeStyle="white";
     ctx.beginPath();
@@ -273,10 +360,6 @@ function draw(){
     ctx.lineTo(canvas.width,midY);
     ctx.stroke();
 
-    const worldLeft=screenToWorld(0);
-    const worldRight=screenToWorld(canvas.width);
-
-    // draw 0 manually
     const zeroX=worldToScreen(new Decimal(0));
     ctx.strokeStyle="#00ffff";
     ctx.beginPath();
@@ -284,40 +367,15 @@ function draw(){
     ctx.lineTo(zeroX,midY+15);
     ctx.stroke();
     ctx.fillText("0",zeroX,midY+20);
-
-    const start=Decimal.max(new Decimal(1),worldLeft);
-    const end=worldRight;
-
-    if(end.gt(start)){
-        const steps=canvas.width*2;
-        const drawing=getdrawing(start,end,Math.floor(canvas.width/iterations));
-
-        for(let item of drawing){
-            const ord=item[0];
-            const pos=item[1];
-            const sx=worldToScreen(pos);
-            if(sx<-50||sx>canvas.width+50) continue;
-
-            ctx.strokeStyle="white";
-            ctx.beginPath();
-            ctx.moveTo(sx,midY-10);
-            ctx.lineTo(sx,midY+10);
-            ctx.stroke();
-            ctx.fillText(toOrdinal(ord),sx,midY+18);
-        }
-    }
-
-    // ===== LABEL =====
-    ctx.fillStyle="white";
-    ctx.fillText("Zoom: "+zoom.toPrecision(6),20,20);
-    ctx.fillText("World: ["+
-        worldLeft.toPrecision(4)+" , "+
-        worldRight.toPrecision(4)+"]",20,40);
-    ctx.fillText("FPS: "+fps,20,60);
 }
 
 // =====================
+// MAIN LOOP
+// =====================
+let fps=0,lastTime=performance.now(),frames=0;
+
 function loop(){
+
     frames++;
     const now=performance.now();
     if(now-lastTime>=1000){
@@ -325,10 +383,24 @@ function loop(){
         frames=0;
         lastTime=now;
     }
-    draw();
+
+    document.getElementById("zoomDisplay").textContent = zoom.toPrecision(6);
+    document.getElementById("fpsDisplay").textContent = fps;
+
+    const centerWorld = screenToWorld(canvas.width/2);
+    document.getElementById("worldDisplay").textContent =
+        centerWorld.toPrecision(10);
+
+    if(isInteracting){
+        renderPreview(); // clears every frame while dragging
+    }
+
     requestAnimationFrame(loop);
 }
+
 loop();
+startRender();
+
 </script>
 </body>
 </html>
