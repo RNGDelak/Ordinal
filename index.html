@@ -328,18 +328,17 @@
         function autoPrecision() {
             if (zoom.lte(0)) return;
 
-            // floor(log10(zoom))
-            const magnitude = zoom.log(10).floor();
+            const zoomMag = zoom.log(10);
+            const worldMag = screenToWorld(canvas.width / 2).abs().log(10);
 
-            // add safety margin (7 like you requested)
-            const newPrecision = magnitude.plus(7).toNumber();
+            const newPrecision = Decimal.max(zoomMag, worldMag)
+                .plus(10)
+                .toNumber();
 
-            // prevent precision from going insane
-            const clamped = Math.max(20, Math.min(newPrecision, 1000));
+            const clamped = Math.max(30, Math.min(newPrecision, 2000));
 
-            Decimal.set({precision: clamped});
+            Decimal.set({ precision: clamped });
         }
-
 
         // =====================
         // FULL RENDER
