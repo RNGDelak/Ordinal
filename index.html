@@ -546,14 +546,14 @@
             for (let i = 0; i < ord.length; i++) {
                 sum = sum.plus(ord[i]);
             }
-            console.log(sum)
+            
 
             const base = new Decimal(3).div(2);   // 3/2
             const C = new Decimal(5);             // scaling constant
 
             const threshold = base.pow(sum).mul(C);
 
-            if (threshold.lt(zoom)) {
+            if (threshold.lt(Decimal.max(new Decimal(25), zoom))) {
                 ctx.font = "20px serif";
                 ctx.fillText(toOrdinal(ord), sx, midY - 23);
             }
