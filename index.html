@@ -331,11 +331,11 @@
             const zoomMag = zoom.log(10);
             const worldMag = screenToWorld(canvas.width / 2).abs().log(10);
 
-            const newPrecision = Decimal.max(zoomMag, worldMag)
-                .plus(10)
+            const newPrecision = Decimal.add(zoomMag, worldMag)
+                .plus(7)
                 .toNumber();
 
-            const clamped = Math.max(30, Math.min(newPrecision, 2000));
+            const clamped = Math.max(7, Math.min(newPrecision, 200000000));
 
             Decimal.set({ precision: clamped });
         }
