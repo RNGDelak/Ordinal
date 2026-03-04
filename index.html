@@ -58,8 +58,8 @@
         // =====================
         // STATE
         // =====================
-        let zoom = new Decimal(1000);
-        let offsetX = new Decimal(-1);
+        let zoom = new Decimal(50);
+        let offsetX = new Decimal(-7.5);
 
         let isInteracting = false;
         let renderVersion = 0;
@@ -326,16 +326,25 @@
         }
 
         function autoPrecision() {
-            if (zoom.lte(0)) return;
+            // Guard against invalid zoom
+            if (!zoom || zoom.lte(0)) return;
 
             const zoomMag = zoom.log(10);
-            const worldMag = screenToWorld(canvas.width / 2).abs().log(10);
 
-            const newPrecision = Decimal.add(zoomMag, worldMag)
+            const centerWorld = screenToWorld(canvas.width / 2);
+            if (!centerWorld || centerWorld.isZero()) return;
+
+            const worldMag = centerWorld.abs().log(10);
+
+            // Calculate precision
+            const newPrecision = zoomMag
+                .plus(worldMag)
                 .plus(7)
+                .floor()
                 .toNumber();
 
-            const clamped = Math.max(7, Math.min(newPrecision, 200000000));
+            // Clamp to sane bounds (Decimal.js practical limits)
+            const clamped = Math.max(7, Math.min(newPrecision, 1e6));
 
             Decimal.set({ precision: clamped });
         }
